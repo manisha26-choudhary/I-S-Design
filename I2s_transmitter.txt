@@ -1,0 +1,144 @@
+`timescale 1ns/1ps
+
+
+//  Counter
+
+module counter #(parameter WIDTH = 8)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire en,
+    output reg [$clog2(WIDTH)-1:0] count,
+    output reg finish
+);
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            count  <= 0;
+            finish <= 0;
+        end else if(en) begin
+            if(count == WIDTH-1) begin
+                count  <= 0;
+                finish <= 1;
+            end else begin
+                count  <= count + 1;
+                finish <= 0;
+            end
+        end else begin
+            count  <= 0;
+            finish <= 0;
+        end
+    end
+endmodule
+
+
+// Parallel-to-Serial (MSB first)
+
+module Parallel_To_Serial #(parameter WIDTH = 8)(
+    input  wire [WIDTH-1:0] parallel_in,
+    input  wire [$clog2(WIDTH)-1:0] count,
+    output wire serial_out
+);
+    assign serial_out = parallel_in[WIDTH-1 - count]; 
+endmodule
+
+
+// Serializer
+
+module Serializer #(parameter WIDTH = 8)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire en,
+    input  wire [WIDTH-1:0] parallel_in,
+    output reg serial_out,
+    output reg done
+);
+    wire [$clog2(WIDTH)-1:0] count;
+    wire counter_done;
+    wire raw_serial;
+
+    counter #(.WIDTH(WIDTH)) cnt(
+        .clk(clk),
+        .rst_n(rst_n),
+        .en(en),
+        .count(count),
+        .finish(counter_done)
+    );
+
+    Parallel_To_Serial #(.WIDTH(WIDTH)) p2s(
+        .parallel_in(parallel_in),
+        .count(count),
+        .serial_out(raw_serial)
+    );
+
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            serial_out <= 0;
+            done <= 0;
+        end else if(en) begin
+            serial_out <= raw_serial;
+            done <= counter_done;
+        end else begin
+            done <= 0;
+        end
+    end
+endmodule
+
+
+// I2S Transmitter 
+
+module i2s_transmitter #(
+    parameter WORD_WIDTH = 8
+)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire [WORD_WIDTH-1:0] tx_left,
+    input  wire [WORD_WIDTH-1:0] tx_right,
+    output wire serial_out,
+    output reg  lrclk,
+    output wire tx_done
+);
+    reg [WORD_WIDTH-1:0] current_word;
+    reg en;
+    wire done;
+
+    Serializer #(.WIDTH(WORD_WIDTH)) serializer(
+        .clk(clk),
+        .rst_n(rst_n),
+        .en(en),
+        .parallel_in(current_word),
+        .serial_out(serial_out),
+        .done(done)
+    );
+
+    assign tx_done = done;
+
+    // FSM
+    localparam S_LOAD=0, S_WAIT=1, S_SHIFT=2;
+    reg [1:0] state;
+
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            lrclk        <= 0;
+            current_word <= 0;
+            en           <= 0;
+            state        <= S_LOAD;
+        end else begin
+            case(state)
+                S_LOAD: begin
+                    lrclk        <= ~lrclk;
+                    current_word <= (lrclk == 0) ? tx_left : tx_right;
+                    en           <= 0;        
+                    state        <= S_WAIT;
+                end
+                S_WAIT: begin
+                    en    <= 1;               
+                    state <= S_SHIFT;
+                end
+                S_SHIFT: begin
+                    if(done)
+                        state <= S_LOAD;
+                end
+            endcase
+        end
+    end
+endmodule
+
