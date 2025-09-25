@@ -55,6 +55,4 @@ This avoids the loss of quality that can occur in analog transmission and simpli
  Audio interfaces in consumer electronics.
  Audio processing in DSPs.
 
-**Block Diagram**
-
 
