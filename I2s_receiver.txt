@@ -1,0 +1,126 @@
+
+//  Counter
+
+module counter #(parameter WIDTH = 8)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire en,
+    output reg [$clog2(WIDTH)-1:0] count,
+    output reg finish
+);
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            count  <= 0;
+            finish <= 0;
+        end else if(en) begin
+            if(count == WIDTH-1) begin
+                count  <= 0;
+                finish <= 1;
+            end else begin
+                count  <= count + 1;
+                finish <= 0;
+            end
+        end else begin
+            count  <= 0;
+            finish <= 0;
+        end
+    end
+endmodule
+
+// Serial-to-Parallel 
+
+module Serial_To_Parallel #(parameter WIDTH = 8)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire en,
+    input  wire serial_in,
+    input  wire lrclk,   
+    output reg [WIDTH-1:0] parallel_out,
+    output reg done
+);
+    reg [WIDTH-1:0] shift_reg;
+    reg [$clog2(WIDTH):0] bit_count;
+    reg lrclk_d;
+
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            lrclk_d      <= 0;
+            bit_count    <= 0;
+            shift_reg    <= 0;
+            parallel_out <= 0;
+            done         <= 0;
+        end else if(en) begin
+            lrclk_d <= lrclk;
+
+            // LRCLK edge = new word
+            if(lrclk != lrclk_d) begin
+                bit_count <= 0;
+                done      <= 0;
+            end else begin
+                bit_count <= bit_count + 1;
+
+                if(bit_count > 0 && bit_count <= WIDTH) begin
+                    shift_reg <= {shift_reg[WIDTH-2:0], serial_in};
+                    if(bit_count == WIDTH) begin
+                        parallel_out <= {shift_reg[WIDTH-2:0], serial_in};
+                        done <= 1;
+                    end else begin
+                        done <= 0;
+                    end
+                end
+            end
+        end
+    end
+endmodule
+
+
+// I2S Receiver
+
+module i2s_receiver #(
+    parameter WORD_WIDTH = 8
+)(
+    input  wire clk,
+    input  wire rst_n,
+    input  wire lrclk,
+    input  wire serial_in,
+    input  wire en,
+    output reg [WORD_WIDTH-1:0] rx_left,
+    output reg [WORD_WIDTH-1:0] rx_right,
+    output reg rx_done
+);
+    wire [WORD_WIDTH-1:0] word;
+    wire done;
+    reg lr_delayed;
+
+    Serial_To_Parallel #(.WIDTH(WORD_WIDTH)) s2p(
+        .clk(clk),
+        .rst_n(rst_n),
+        .en(en),
+        .serial_in(serial_in),
+        .lrclk(lrclk),
+        .parallel_out(word),
+        .done(done)
+    );
+
+    always @(posedge clk or negedge rst_n)
+        if(!rst_n) lr_delayed <= 0;
+        else       lr_delayed <= lrclk;
+
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            rx_left  <= 0;
+            rx_right <= 0;
+            rx_done  <= 0;
+        end else begin
+            rx_done <= 0;
+            if(done) begin
+                if(lr_delayed == 0)
+                    rx_right <= word;
+                else
+                    
+               rx_left <= word;
+                rx_done <= 1;
+            end
+        end
+    end
+endmodule
